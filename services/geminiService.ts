@@ -4,10 +4,56 @@ import { EmotionProfile, StoryAnalysis, Voice } from "../types";
 
 const API_KEY = process.env.API_KEY || "";
 
+// In-memory cache for audio data (larger payloads)
+const audioCache = new Map<string, string>();
+
+// Persistent cache keys
+const ANALYSIS_CACHE_PREFIX = "aether_analysis_";
+
 /**
- * Utility to decode base64 to Uint8Array manually as requested.
+ * Normalizes text to create a consistent cache key
  */
-function decodeBase64(base64: string): Uint8Array {
+const getCacheKey = (text: string, voice?: string) => {
+  const normalizedText = text.trim().toLowerCase();
+  const textId = normalizedText.length > 100 
+    ? `${normalizedText.substring(0, 50)}_${normalizedText.length}_${normalizedText.substring(normalizedText.length - 50)}`
+    : normalizedText;
+  return voice ? `${voice}:${textId}` : textId;
+};
+
+/**
+ * Wraps raw PCM data into a valid WAV file with a header.
+ */
+export function pcmToWav(pcmData: Uint8Array, sampleRate: number = 24000): Blob {
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+
+  // RIFF identifier
+  view.setUint32(0, 0x52494646, false); // "RIFF"
+  view.setUint32(4, 36 + pcmData.length, true); // File length
+  view.setUint32(8, 0x57415645, false); // "WAVE"
+
+  // FMT sub-chunk
+  view.setUint32(12, 0x666d7420, false); // "fmt "
+  view.setUint32(16, 16, true); // Sub-chunk size (16 for PCM)
+  view.setUint16(20, 1, true); // Audio format (1 = PCM)
+  view.setUint16(22, 1, true); // Number of channels (Mono)
+  view.setUint32(24, sampleRate, true); // Sample rate
+  view.setUint32(28, sampleRate * 2, true); // Byte rate (SampleRate * Channels * BitsPerSample / 8)
+  view.setUint16(32, 2, true); // Block align (Channels * BitsPerSample / 8)
+  view.setUint16(34, 16, true); // Bits per sample
+
+  // Data sub-chunk
+  view.setUint32(36, 0x64617461, false); // "data"
+  view.setUint32(40, pcmData.length, true); // Data length
+
+  return new Blob([header, pcmData], { type: 'audio/wav' });
+}
+
+/**
+ * Utility to decode base64 to Uint8Array.
+ */
+export function base64ToUint8Array(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
@@ -40,6 +86,13 @@ export async function decodeAudioData(
 }
 
 export const analyzeTextEmotions = async (text: string): Promise<StoryAnalysis> => {
+  const cacheKey = getCacheKey(text);
+  const cached = localStorage.getItem(ANALYSIS_CACHE_PREFIX + cacheKey);
+  
+  if (cached) {
+    return JSON.parse(cached);
+  }
+
   const ai = new GoogleGenAI({ apiKey: API_KEY });
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -63,22 +116,10 @@ export const analyzeTextEmotions = async (text: string): Promise<StoryAnalysis> 
             items: {
               type: Type.OBJECT,
               properties: {
-                emotion: { 
-                  type: Type.STRING,
-                  description: "The specific emotion from the provided taxonomy."
-                },
-                tone: { 
-                  type: Type.STRING,
-                  description: "A descriptive adjective for the vocal tone (e.g., 'breathy', 'harsh', 'gentle')."
-                },
-                intensity: { 
-                  type: Type.NUMBER,
-                  description: "Intensity from 1-10."
-                },
-                suggestedVoice: { 
-                  type: Type.STRING,
-                  description: "One of: Kore, Puck, Charon, Fenrir, Zephyr"
-                }
+                emotion: { type: Type.STRING },
+                tone: { type: Type.STRING },
+                intensity: { type: Type.NUMBER },
+                suggestedVoice: { type: Type.STRING }
               },
               required: ["emotion", "tone", "intensity", "suggestedVoice"]
             }
@@ -89,7 +130,11 @@ export const analyzeTextEmotions = async (text: string): Promise<StoryAnalysis> 
     }
   });
 
-  return JSON.parse(response.text);
+  const result = JSON.parse(response.text);
+  try {
+    localStorage.setItem(ANALYSIS_CACHE_PREFIX + cacheKey, JSON.stringify(result));
+  } catch (e) {}
+  return result;
 };
 
 export const generateEmotionalTTS = async (
@@ -97,9 +142,10 @@ export const generateEmotionalTTS = async (
   analysis: StoryAnalysis,
   voice: Voice
 ): Promise<string> => {
+  const cacheKey = getCacheKey(text, voice);
+  if (audioCache.has(cacheKey)) return audioCache.get(cacheKey)!;
+
   const ai = new GoogleGenAI({ apiKey: API_KEY });
-  
-  // Construct a prompt that includes the newly defined complex emotion context
   const primaryEmotion = analysis.emotions[0];
   const prompt = `Perform this narration with high emotional intelligence. 
   Current Emotion: ${primaryEmotion.emotion}
@@ -116,9 +162,7 @@ export const generateEmotionalTTS = async (
       responseModalities: [Modality.AUDIO],
       speechConfig: {
         voiceConfig: {
-          prebuiltVoiceConfig: { 
-            voiceName: voice
-          },
+          prebuiltVoiceConfig: { voiceName: voice },
         },
       },
     },
@@ -126,5 +170,7 @@ export const generateEmotionalTTS = async (
 
   const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
   if (!base64Audio) throw new Error("Failed to generate audio data");
+
+  audioCache.set(cacheKey, base64Audio);
   return base64Audio;
 };

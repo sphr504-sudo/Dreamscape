@@ -47,14 +47,16 @@ const TTSForm: React.FC<TTSFormProps> = ({
 
     try {
       // Phase 1: Emotional Analysis (0% to 45%)
-      progressInterval = simulateProgress(5, 45, 2000);
+      // If cached, this will resolve instantly.
+      progressInterval = simulateProgress(5, 45, 1500);
       const analysis = await analyzeTextEmotions(text);
       clearInterval(progressInterval);
       setProgress(45);
       onAnalysisComplete(analysis);
       
       // Phase 2: Neural Audio Synthesis (45% to 92%)
-      progressInterval = simulateProgress(45, 92, 4000);
+      // If cached, this will resolve instantly.
+      progressInterval = simulateProgress(45, 92, 2500);
       const audioBase64 = await generateEmotionalTTS(text, analysis, selectedVoice);
       clearInterval(progressInterval);
       setProgress(95);
@@ -64,10 +66,10 @@ const TTSForm: React.FC<TTSFormProps> = ({
         setProgress(100);
         onAudioComplete(audioBase64);
         setTimeout(() => setProgress(0), 1000);
-      }, 500);
+      }, 200);
 
     } catch (err: any) {
-      clearInterval(progressInterval);
+      if (progressInterval) clearInterval(progressInterval);
       console.error(err);
       setError(err.message || 'An unexpected error occurred during synthesis.');
       setProgress(0);
