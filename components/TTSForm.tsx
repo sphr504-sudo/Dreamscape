@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Sparkles, Loader2, Music, Users, Info, Brain, AudioLines } from 'lucide-react';
+import { Sparkles, Loader2, Music, Users, Info, Brain, AudioLines, Fingerprint, PlayCircle } from 'lucide-react';
 import { analyzeScript, synthesizeSegment } from '../services/geminiService';
 import { ScriptAnalysis, CharacterDef, Voice } from '../types';
 
@@ -20,64 +20,89 @@ const TTSForm: React.FC<TTSFormProps> = ({
   isProcessing 
 }) => {
   const [text, setText] = useState('');
-  const [registry, setRegistry] = useState<CharacterDef[]>([]);
+  const [localAnalysis, setLocalAnalysis] = useState<ScriptAnalysis | null>(null);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [currentStep, setCurrentStep] = useState<{ current: number; total: number } | null>(null);
 
-  const handleGenerate = async () => {
+  // Step 1: Analyze script and detect characters ("Training" phase)
+  const handleAnalyze = async () => {
     if (!text.trim()) return;
     
     setIsProcessing(true);
     setProgress(0);
-    setStatus('Initializing Neural Engine...');
+    setStatus('Scanning Script for Bio-Signatures...');
     setCurrentStep(null);
 
     try {
-      // 1. Structural Analysis
-      setStatus('Analyzing Script Architecture...');
-      setProgress(10);
+      setProgress(20);
       const analysis = await analyzeScript(text);
-      setRegistry(analysis.characters);
+      setLocalAnalysis(analysis);
       onAnalysisComplete(analysis);
-      setProgress(25);
+      setProgress(100);
+      setStatus('Character Analysis Complete');
+      
+      setTimeout(() => {
+        setIsProcessing(false);
+        setProgress(0);
+      }, 1000);
+    } catch (err: any) {
+      console.error(err);
+      setStatus('Analysis Error: ' + err.message);
+      setIsProcessing(false);
+    }
+  };
 
-      // 2. Sequential Synthesis
+  // Step 2: Actually synthesize the audio based on detected characters and assigned voices
+  const handleSynthesize = async () => {
+    if (!localAnalysis) return;
+
+    setIsProcessing(true);
+    setProgress(0);
+    setStatus('Initializing Neural Synthesis...');
+
+    try {
       const audioParts: string[] = [];
-      const total = analysis.segments.length;
+      const total = localAnalysis.segments.length;
       setCurrentStep({ current: 0, total });
 
       for (let i = 0; i < total; i++) {
-        const seg = analysis.segments[i];
-        const char = analysis.characters.find(c => c.id === seg.characterId) || analysis.characters[0];
+        const seg = localAnalysis.segments[i];
+        const char = localAnalysis.characters.find(c => c.id === seg.characterId) || localAnalysis.characters[0];
         
         setCurrentStep({ current: i + 1, total });
-        setStatus(`Synthesizing Segment: ${char.name}`);
+        setStatus(`Synthesizing: ${char.name}`);
         
         const base64 = await synthesizeSegment(seg, char);
         audioParts.push(base64);
         
-        const currentProgress = 25 + ((i + 1) / total) * 75;
+        const currentProgress = ((i + 1) / total) * 100;
         setProgress(Math.floor(currentProgress));
       }
 
       onAudioComplete(audioParts);
-      setStatus('Performance Finalized');
+      setStatus('Audio Generation Finalized');
       setTimeout(() => {
         setProgress(0);
         setCurrentStep(null);
+        setIsProcessing(false);
       }, 1500);
 
     } catch (err: any) {
       console.error(err);
-      setStatus('Engine Error: ' + err.message);
-    } finally {
+      setStatus('Synthesis Error: ' + err.message);
       setIsProcessing(false);
     }
   };
 
   const updateCharacterVoice = (charId: string, voice: Voice) => {
-    setRegistry(prev => prev.map(c => c.id === charId ? { ...c, baseVoice: voice } : c));
+    if (!localAnalysis) return;
+    const updated = {
+      ...localAnalysis,
+      characters: localAnalysis.characters.map(c => c.id === charId ? { ...c, baseVoice: voice } : c)
+    };
+    setLocalAnalysis(updated);
+    onAnalysisComplete(updated);
   };
 
   const setSample = () => {
@@ -85,11 +110,12 @@ const TTSForm: React.FC<TTSFormProps> = ({
 Arthur: (fearful) Is someone there? I can hear your breathing.
 Ghost: (whispering) I have been waiting for you, Arthur. For eighty years.
 Baby: (giggling) Da-da!`);
+    setLocalAnalysis(null);
   };
 
   return (
     <div className="space-y-6 relative">
-      {/* Synthesis Overlay Loader */}
+      {/* Processing Overlay */}
       {isProcessing && (
         <div className="absolute inset-0 z-50 bg-[#0a0a0a]/80 backdrop-blur-md rounded-2xl flex flex-col items-center justify-center p-8 border border-indigo-500/20 animate-in fade-in zoom-in duration-300">
           <div className="relative mb-8">
@@ -100,13 +126,13 @@ Baby: (giggling) Da-da!`);
           </div>
           
           <div className="text-center space-y-4 w-full max-w-xs">
-            <h3 className="text-xl font-bold text-white tracking-tight">Generating Audio</h3>
+            <h3 className="text-xl font-bold text-white tracking-tight">Neural Processing</h3>
             <p className="text-indigo-400 text-xs font-mono uppercase tracking-[0.2em]">{status}</p>
             
             {currentStep && (
               <div className="flex items-center justify-center gap-2 text-gray-400">
                 <AudioLines className="w-4 h-4" />
-                <span className="text-sm font-medium">Part {currentStep.current} of {currentStep.total}</span>
+                <span className="text-sm font-medium">Segment {currentStep.current} / {currentStep.total}</span>
               </div>
             )}
 
@@ -142,30 +168,48 @@ Baby: (giggling) Da-da!`);
 
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            if (localAnalysis) setLocalAnalysis(null); // Reset analysis if text changes
+          }}
           placeholder="Format: Character Name: Dialogue line..."
           disabled={isProcessing}
           className="w-full h-48 bg-black/40 border border-white/5 rounded-xl p-4 text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-none transition-all placeholder:text-gray-600 disabled:opacity-50"
         />
 
-        <button
-          onClick={handleGenerate}
-          disabled={isProcessing || !text.trim()}
-          className="w-full mt-6 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg group active:scale-[0.98]"
-        >
-          {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />}
-          <span>Generate Neural Performance</span>
-        </button>
+        {!localAnalysis ? (
+          <button
+            onClick={handleAnalyze}
+            disabled={isProcessing || !text.trim()}
+            className="w-full mt-6 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg group active:scale-[0.98]"
+          >
+            <Fingerprint className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            <span>Analyze Script & Detect Cast</span>
+          </button>
+        ) : (
+          <button
+            onClick={handleSynthesize}
+            disabled={isProcessing}
+            className="w-full mt-6 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg group active:scale-[0.98] animate-pulse-subtle"
+          >
+            <PlayCircle className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+            <span>Generate Full Audio Output</span>
+          </button>
+        )}
       </div>
 
-      {registry.length > 0 && !isProcessing && (
+      {localAnalysis && !isProcessing && (
         <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 animate-in slide-in-from-bottom-4 duration-500">
-          <div className="flex items-center gap-3 mb-4">
-            <Users className="text-indigo-500 w-5 h-5" />
-            <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400">Character Voice Registry</h3>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <Users className="text-indigo-500 w-5 h-5" />
+              <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400">Detected Cast & Persona Map</h3>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-bold border border-emerald-400/30 px-2 py-0.5 rounded">MODELS READY</span>
           </div>
+          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {registry.map(char => (
+            {localAnalysis.characters.map(char => (
               <div key={char.id} className="bg-black/30 border border-white/5 p-4 rounded-xl flex flex-col gap-3 group hover:border-indigo-500/30 transition-colors">
                 <div className="flex justify-between items-start">
                   <div>
