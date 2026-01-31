@@ -1,6 +1,4 @@
 
-export type Voice = 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
-
 export type CharacterType = 'newborn' | 'child' | 'adult' | 'elder' | 'ghost' | 'paranormal' | 'machine';
 
 export interface CharacterDef {
@@ -8,8 +6,8 @@ export interface CharacterDef {
   name: string;
   gender: 'male' | 'female' | 'non-binary' | 'unknown';
   ageGroup: CharacterType;
-  baseVoice: Voice;
   traits: string;
+  assignedVoiceName?: string; // Browser voice name
 }
 
 export interface DialogueSegment {
@@ -24,10 +22,4 @@ export interface ScriptAnalysis {
   summary: string;
   characters: CharacterDef[];
   segments: DialogueSegment[];
-}
-
-export interface AudioPlaybackState {
-  isPlaying: boolean;
-  duration: number;
-  currentTime: number;
 }
