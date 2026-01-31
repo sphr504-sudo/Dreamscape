@@ -1,17 +1,29 @@
 
 export type Voice = 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
 
-export interface EmotionProfile {
-  emotion: string;
-  tone: string;
-  intensity: number; // 1-10
-  suggestedVoice: Voice;
+export type CharacterType = 'newborn' | 'child' | 'adult' | 'elder' | 'ghost' | 'paranormal' | 'machine';
+
+export interface CharacterDef {
+  id: string;
+  name: string;
+  gender: 'male' | 'female' | 'non-binary' | 'unknown';
+  ageGroup: CharacterType;
+  baseVoice: Voice;
+  traits: string;
 }
 
-export interface StoryAnalysis {
+export interface DialogueSegment {
+  characterId: string;
+  text: string;
+  emotion: string;
+  intensity: number;
+  tone: string;
+}
+
+export interface ScriptAnalysis {
   summary: string;
-  emotions: EmotionProfile[];
-  narrationStyle: string;
+  characters: CharacterDef[];
+  segments: DialogueSegment[];
 }
 
 export interface AudioPlaybackState {
