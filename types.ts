@@ -1,5 +1,6 @@
 
 export type CharacterType = 'newborn' | 'child' | 'adult' | 'elder' | 'ghost' | 'paranormal' | 'machine';
+export type Voice = 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
 
 export interface CharacterDef {
   id: string;
@@ -7,7 +8,8 @@ export interface CharacterDef {
   gender: 'male' | 'female' | 'non-binary' | 'unknown';
   ageGroup: CharacterType;
   traits: string;
-  assignedVoiceName?: string; // Browser voice name
+  assignedVoiceName?: Voice;
+  suggestedVoice?: Voice;
 }
 
 export interface DialogueSegment {

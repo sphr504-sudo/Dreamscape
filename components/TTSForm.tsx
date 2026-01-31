@@ -1,70 +1,88 @@
 
-import React, { useState, useEffect } from 'react';
-import { Music, Users, Info, Brain, Fingerprint, PlayCircle, Sliders, MessageSquareQuote, AlertCircle } from 'lucide-react';
-import { analyzeScript } from '../services/geminiService';
-import { ScriptAnalysis, CharacterDef, DialogueSegment } from '../types';
+import React, { useState } from 'react';
+import { Brain, Fingerprint, PlayCircle, Sliders, MessageSquareQuote, AlertCircle, Timer, AudioLines, Users } from 'lucide-react';
+import { analyzeScript, synthesizeSegment } from '../services/geminiService';
+import { ScriptAnalysis, CharacterDef, Voice } from '../types';
 
 interface TTSFormProps {
   onAnalysisComplete: (analysis: ScriptAnalysis) => void;
+  onAudioComplete: (blobs: string[]) => void;
   setIsProcessing: (val: boolean) => void;
   isProcessing: boolean;
-  onPerformRequest: () => void;
 }
+
+const VOICES: Voice[] = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'];
 
 const TTSForm: React.FC<TTSFormProps> = ({ 
   onAnalysisComplete, 
+  onAudioComplete,
   setIsProcessing,
-  isProcessing,
-  onPerformRequest
+  isProcessing
 }) => {
   const [text, setText] = useState('');
   const [localAnalysis, setLocalAnalysis] = useState<ScriptAnalysis | null>(null);
   const [status, setStatus] = useState('');
+  const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
-
-  useEffect(() => {
-    const loadVoices = () => {
-      const voices = window.speechSynthesis.getVoices();
-      setBrowserVoices(voices.filter(v => v.lang.startsWith('en')));
-    };
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-  }, []);
 
   const handleAnalyze = async () => {
     if (!text.trim()) return;
-    
     setIsProcessing(true);
+    setProgress(0);
     setErrorMsg(null);
-    setStatus('Analyzing Script Emotion...');
+    setStatus('Detecting Emotional Arcs...');
 
     try {
       const analysis = await analyzeScript(text, (msg) => setStatus(msg));
-      
-      // Auto-assign random voices initially
-      const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
-      analysis.characters = analysis.characters.map((c, i) => ({
+      // Map suggested voices to assignedVoiceName
+      analysis.characters = analysis.characters.map(c => ({
         ...c,
-        assignedVoiceName: voices[i % voices.length]?.name
+        assignedVoiceName: c.suggestedVoice as Voice || 'Kore'
       }));
-
       setLocalAnalysis(analysis);
       onAnalysisComplete(analysis);
-      setStatus('Script Analyzed');
       setIsProcessing(false);
     } catch (err: any) {
-      console.error("Analysis Error:", err);
-      setErrorMsg(err.message || "Failed to analyze script.");
+      setErrorMsg("Failed to analyze script. Please try a shorter snippet.");
       setIsProcessing(false);
     }
   };
 
-  const updateCharacterVoice = (charId: string, voiceName: string) => {
+  const handleSynthesize = async () => {
+    if (!localAnalysis) return;
+    setIsProcessing(true);
+    setProgress(0);
+    setStatus('Initializing Neural Actors...');
+    const parts: string[] = [];
+
+    try {
+      for (let i = 0; i < localAnalysis.segments.length; i++) {
+        const seg = localAnalysis.segments[i];
+        const char = localAnalysis.characters.find(c => c.id === seg.characterId)!;
+        
+        setStatus(`Performing: ${char.name}...`);
+        const b64 = await synthesizeSegment(seg, char, (msg) => setStatus(msg));
+        parts.push(b64);
+        setProgress(Math.round(((i + 1) / localAnalysis.segments.length) * 100));
+        
+        // Pacing for free tier
+        if (i < localAnalysis.segments.length - 1) {
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+      onAudioComplete(parts);
+      setIsProcessing(false);
+    } catch (err: any) {
+      setErrorMsg("Neural synthesis limit reached. Please wait a minute and try again.");
+      setIsProcessing(false);
+    }
+  };
+
+  const updateCharacterVoice = (charId: string, voice: Voice) => {
     if (!localAnalysis) return;
     const updated = {
       ...localAnalysis,
-      characters: localAnalysis.characters.map(c => c.id === charId ? { ...c, assignedVoiceName: voiceName } : c)
+      characters: localAnalysis.characters.map(c => c.id === charId ? { ...c, assignedVoiceName: voice } : c)
     };
     setLocalAnalysis(updated);
     onAnalysisComplete(updated);
@@ -74,49 +92,37 @@ const TTSForm: React.FC<TTSFormProps> = ({
     if (!localAnalysis) return;
     const updatedSegments = [...localAnalysis.segments];
     updatedSegments[index] = { ...updatedSegments[index], intensity };
-    const updated = { ...localAnalysis, segments: updatedSegments };
-    setLocalAnalysis(updated);
-    onAnalysisComplete(updated);
-  };
-
-  const setSample = () => {
-    setText(`Narrator: The old manor stood silent, but the air felt heavy.
-Arthur: (fearful) Is someone there? I can hear your breathing.
-Ghost: (whispering) I have been waiting for you, Arthur. For eighty years.`);
-    setLocalAnalysis(null);
-    setErrorMsg(null);
+    setLocalAnalysis({ ...localAnalysis, segments: updatedSegments });
   };
 
   return (
     <div className="space-y-6 relative">
       {isProcessing && (
-        <div className="absolute inset-0 z-[60] bg-[#070707]/95 backdrop-blur-2xl rounded-3xl flex flex-col items-center justify-center p-8 border border-white/10 animate-in fade-in duration-300">
-          <Brain className="w-16 h-16 text-indigo-400 animate-pulse mb-6" />
-          <h3 className="text-xl font-bold text-white tracking-tight">Emotional Intelligence Active</h3>
-          <p className="text-indigo-400 text-xs font-mono uppercase tracking-[0.3em] mt-2">{status}</p>
+        <div className="absolute inset-0 z-[60] bg-[#070707]/95 backdrop-blur-2xl rounded-3xl flex flex-col items-center justify-center p-8 border border-white/10 animate-in fade-in">
+          <div className="w-24 h-24 relative mb-6">
+            <div className="absolute inset-0 border-t-2 border-indigo-500 rounded-full animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Brain className="w-10 h-10 text-indigo-400" />
+            </div>
+          </div>
+          <p className="text-indigo-400 text-[10px] font-mono uppercase tracking-[0.3em]">{status}</p>
+          <div className="w-48 h-1 bg-white/5 rounded-full mt-6 overflow-hidden">
+            <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+          </div>
         </div>
       )}
 
       {errorMsg && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-5 flex items-start gap-4">
           <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-          <div className="flex-1">
-            <h4 className="text-sm font-bold text-red-400 uppercase tracking-widest">Analysis Error</h4>
-            <p className="text-xs text-red-400/80 mt-1">{errorMsg}</p>
-          </div>
+          <p className="text-xs text-red-400/80">{errorMsg}</p>
         </div>
       )}
 
-      <div className="bg-white/[0.03] border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-        <div className="flex items-center justify-between mb-6">
-          <label className="text-xs font-bold text-indigo-400 uppercase tracking-[0.2em] flex items-center gap-3">
-            <MessageSquareQuote className="w-4 h-4" /> Script Manuscript
-          </label>
-          <button onClick={setSample} className="text-[10px] text-indigo-400/60 hover:text-indigo-300 transition-colors font-bold uppercase tracking-widest" disabled={isProcessing}>
-            Load Sample
-          </button>
-        </div>
-
+      <div className="bg-white/[0.03] border border-white/10 rounded-3xl p-8 shadow-2xl relative">
+        <label className="text-xs font-bold text-indigo-400 uppercase tracking-[0.2em] flex items-center gap-3 mb-6">
+          <MessageSquareQuote className="w-4 h-4" /> Script Manuscript
+        </label>
         <textarea
           value={text}
           onChange={(e) => { setText(e.target.value); if (localAnalysis) setLocalAnalysis(null); }}
@@ -135,11 +141,11 @@ Ghost: (whispering) I have been waiting for you, Arthur. For eighty years.`);
           </button>
         ) : (
           <button
-            onClick={onPerformRequest}
+            onClick={handleSynthesize}
             className="w-full mt-8 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-5 rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl active:scale-[0.98] animate-pulse-subtle"
           >
             <PlayCircle className="w-6 h-6" />
-            <span className="text-lg uppercase tracking-widest">Perform Scene</span>
+            <span className="text-lg uppercase tracking-widest">Render Neural Audio</span>
           </button>
         )}
       </div>
@@ -149,53 +155,45 @@ Ghost: (whispering) I have been waiting for you, Arthur. For eighty years.`);
           <div className="bg-white/[0.03] border border-white/10 rounded-3xl p-8">
             <div className="flex items-center gap-4 mb-8">
               <Users className="text-indigo-400 w-5 h-5" />
-              <h3 className="text-sm font-bold uppercase tracking-widest text-white">Cast Voice Assignment</h3>
+              <h3 className="text-sm font-bold uppercase tracking-widest text-white">Cast Voice Selection</h3>
             </div>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {localAnalysis.characters.map(char => (
                 <div key={char.id} className="bg-black/40 border border-white/5 p-5 rounded-2xl flex flex-col gap-4">
-                  <div className="flex justify-between items-center">
-                    <h4 className="font-bold text-white text-sm">{char.name}</h4>
-                    <span className="text-[9px] text-indigo-400/70 font-bold uppercase tracking-widest">{char.ageGroup}</span>
-                  </div>
-                  <select 
-                    value={char.assignedVoiceName} 
-                    onChange={(e) => updateCharacterVoice(char.id, e.target.value)}
-                    className="bg-white/5 border border-white/10 rounded-lg p-2 text-[10px] text-gray-300 outline-none"
-                  >
-                    {browserVoices.map(v => (
-                      <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>
+                  <h4 className="font-bold text-white text-sm">{char.name} ({char.ageGroup})</h4>
+                  <div className="grid grid-cols-5 gap-1">
+                    {VOICES.map(v => (
+                      <button
+                        key={v}
+                        onClick={() => updateCharacterVoice(char.id, v)}
+                        className={`text-[8px] font-bold py-2 rounded border ${char.assignedVoiceName === v ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-white/5 border-transparent text-gray-500'}`}
+                      >
+                        {v}
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
-
           <div className="bg-white/[0.03] border border-white/10 rounded-3xl p-8">
             <div className="flex items-center gap-4 mb-8">
               <Sliders className="text-sky-400 w-5 h-5" />
-              <h3 className="text-sm font-bold uppercase tracking-widest text-white">Emotional Fine-Tuning</h3>
+              <h3 className="text-sm font-bold uppercase tracking-widest text-white">Emotional Tuning</h3>
             </div>
-            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-4 custom-scrollbar">
-              {localAnalysis.segments.map((seg, idx) => {
-                const char = localAnalysis.characters.find(c => c.id === seg.characterId);
-                return (
-                  <div key={idx} className="bg-black/40 border border-white/5 p-6 rounded-2xl space-y-3">
-                    <div className="flex justify-between items-center text-[10px]">
-                      <span className="text-sky-400 font-bold uppercase">{char?.name} • {seg.emotion}</span>
-                      <span className="text-gray-500 font-mono">SEG_{idx+1}</span>
-                    </div>
-                    <p className="text-sm text-gray-400 italic font-light">"{seg.text}"</p>
-                    <input 
-                      type="range" min="1" max="10" value={seg.intensity} 
-                      onChange={(e) => updateSegmentIntensity(idx, parseInt(e.target.value))}
-                      className="w-full h-1 bg-white/5 rounded-full appearance-none cursor-pointer accent-sky-500"
-                    />
+            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-4 custom-scrollbar">
+              {localAnalysis.segments.map((seg, idx) => (
+                <div key={idx} className="bg-black/40 border border-white/5 p-4 rounded-xl space-y-2">
+                  <div className="flex justify-between items-center text-[10px]">
+                    <span className="text-sky-400 font-bold uppercase">{seg.emotion} (Intensity {seg.intensity})</span>
                   </div>
-                );
-              })}
+                  <input 
+                    type="range" min="1" max="10" value={seg.intensity} 
+                    onChange={(e) => updateSegmentIntensity(idx, parseInt(e.target.value))}
+                    className="w-full h-1 bg-white/5 rounded-full appearance-none cursor-pointer accent-sky-500"
+                  />
+                </div>
+              ))}
             </div>
           </div>
         </div>

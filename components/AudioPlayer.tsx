@@ -1,67 +1,55 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, Volume2, AudioLines } from 'lucide-react';
-import { ScriptAnalysis, DialogueSegment } from '../types';
+import { Play, Pause, Download, Volume2, RotateCcw } from 'lucide-react';
+import { ScriptAnalysis } from '../types';
+import { mergeAudioSegments } from '../services/geminiService';
 
 interface AudioPlayerProps {
   analysis: ScriptAnalysis | null;
-  triggerPlay: number; // Increment to force play
+  audioParts: string[]; // Base64 PCM segments
 }
 
-const AudioPlayer: React.FC<AudioPlayerProps> = ({ analysis, triggerPlay }) => {
+const AudioPlayer: React.FC<AudioPlayerProps> = ({ analysis, audioParts }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const synthesisRef = useRef<SpeechSynthesis>(window.speechSynthesis);
-  const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   const stopAudio = () => {
-    synthesisRef.current.cancel();
+    if (currentSourceRef.current) {
+      currentSourceRef.current.stop();
+    }
     setIsPlaying(false);
   };
 
-  const playSegment = (index: number) => {
-    if (!analysis || index >= analysis.segments.length) {
+  const playSegment = async (index: number) => {
+    if (!audioParts[index]) {
       setIsPlaying(false);
       setCurrentIndex(0);
       return;
     }
 
-    const seg = analysis.segments[index];
-    const char = analysis.characters.find(c => c.id === seg.characterId);
-    const utterance = new SpeechSynthesisUtterance(seg.text);
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    }
 
-    // Voice Selection
-    const voices = synthesisRef.current.getVoices();
-    const voice = voices.find(v => v.name === char?.assignedVoiceName) || voices[0];
-    utterance.voice = voice;
+    const base64 = audioParts[index];
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
 
-    // Emotional Modulation Logic
-    // 1. Pitch: Children/Ghosts = higher, Elders/Monsters = lower
-    let pitch = 1.0;
-    if (char?.ageGroup === 'child' || char?.ageGroup === 'newborn') pitch = 1.4;
-    if (char?.ageGroup === 'elder') pitch = 0.8;
-    if (char?.ageGroup === 'ghost' || char?.ageGroup === 'paranormal') pitch = 0.6;
+    const dataInt16 = new Int16Array(bytes.buffer);
+    const audioBuffer = audioContextRef.current.createBuffer(1, dataInt16.length, 24000);
+    const channelData = audioBuffer.getChannelData(0);
+    for (let i = 0; i < dataInt16.length; i++) channelData[i] = dataInt16[i] / 32768.0;
+
+    const source = audioContextRef.current.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContextRef.current.destination);
     
-    // Adjust pitch further based on emotion
-    if (seg.emotion.toLowerCase().includes('happy') || seg.emotion.toLowerCase().includes('fear')) pitch += 0.2;
-    if (seg.emotion.toLowerCase().includes('sad') || seg.emotion.toLowerCase().includes('angry')) pitch -= 0.1;
-    
-    // 2. Rate: Intensity affects speed
-    // Intensity 1 = slow (0.7), Intensity 10 = fast (1.3)
-    let rate = 0.8 + (seg.intensity / 10) * 0.5;
-    if (seg.emotion.toLowerCase().includes('whisper')) rate = 0.6;
-
-    utterance.pitch = Math.max(0.1, Math.min(2.0, pitch));
-    utterance.rate = Math.max(0.1, Math.min(2.0, rate));
-    utterance.volume = 1.0;
-
-    utterance.onstart = () => {
-      setIsPlaying(true);
-      setCurrentIndex(index);
-    };
-
-    utterance.onend = () => {
-      if (index + 1 < analysis.segments.length) {
+    source.onended = () => {
+      if (index + 1 < audioParts.length) {
         playSegment(index + 1);
       } else {
         setIsPlaying(false);
@@ -69,22 +57,31 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ analysis, triggerPlay }) => {
       }
     };
 
-    currentUtteranceRef.current = utterance;
-    synthesisRef.current.speak(utterance);
+    setCurrentIndex(index);
+    setIsPlaying(true);
+    currentSourceRef.current = source;
+    source.start(0);
+  };
+
+  const handleDownload = () => {
+    if (audioParts.length === 0) return;
+    const blob = mergeAudioSegments(audioParts);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Aether_Performance_${Date.now()}.wav`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   useEffect(() => {
-    if (triggerPlay > 0 && analysis) {
-      stopAudio();
-      playSegment(0);
-    }
     return () => stopAudio();
-  }, [triggerPlay]);
+  }, []);
 
-  if (!analysis) return null;
+  if (audioParts.length === 0) return null;
 
   return (
-    <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-2xl p-6 transition-all animate-in fade-in duration-500">
+    <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-2xl p-6 transition-all animate-in fade-in">
       <div className="flex flex-col md:flex-row items-center gap-6">
         <button
           onClick={() => isPlaying ? stopAudio() : playSegment(currentIndex)}
@@ -98,32 +95,35 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ analysis, triggerPlay }) => {
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-indigo-400" />
               <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">
-                {isPlaying ? `Performing: ${analysis.characters.find(c => c.id === analysis.segments[currentIndex].characterId)?.name}` : 'Local Synthesis Ready'}
+                {isPlaying ? `Part ${currentIndex + 1} of ${audioParts.length}` : 'Performance Rendered'}
               </span>
             </div>
-            <span className="text-[10px] font-mono text-gray-500">{analysis.segments.length} Performance Segments</span>
+            <span className="text-[10px] font-mono text-gray-500">24kHz MONO WAV</span>
           </div>
           
-          <div className="h-3 bg-black/40 rounded-full flex gap-1 p-[2px] overflow-hidden">
-            {analysis.segments.map((_, i) => (
-              <div 
-                key={i} 
-                className={`h-full rounded-full transition-all duration-500 ${
-                  i === currentIndex && isPlaying ? 'bg-indigo-400 flex-[3] shadow-[0_0_8px_rgba(129,140,248,0.5)]' : 
-                  i < currentIndex ? 'bg-indigo-900/50 flex-1' : 'bg-white/5 flex-1'
-                }`} 
-              />
+          <div className="h-2 bg-black/40 rounded-full overflow-hidden flex gap-0.5">
+            {audioParts.map((_, i) => (
+              <div key={i} className={`h-full transition-all duration-300 ${i === currentIndex && isPlaying ? 'bg-indigo-400 flex-[4]' : i < currentIndex ? 'bg-indigo-900 flex-1' : 'bg-white/5 flex-1'}`} />
             ))}
           </div>
         </div>
 
-        <button 
-          onClick={() => { stopAudio(); playSegment(0); }} 
-          className="p-3 bg-white/5 rounded-xl text-gray-400 hover:text-white border border-white/5"
-          title="Replay from Start"
-        >
-          <RotateCcw size={20} />
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => { stopAudio(); playSegment(0); }} 
+            className="p-3 bg-white/5 rounded-xl text-gray-400 hover:text-white border border-white/5"
+            title="Replay"
+          >
+            <RotateCcw size={20} />
+          </button>
+          <button 
+            onClick={handleDownload}
+            className="p-3 bg-emerald-500/20 rounded-xl text-emerald-400 hover:text-emerald-300 border border-emerald-500/20 flex items-center gap-2 transition-all font-bold text-xs uppercase tracking-widest"
+          >
+            <Download size={20} />
+            Download Performance
+          </button>
+        </div>
       </div>
     </div>
   );

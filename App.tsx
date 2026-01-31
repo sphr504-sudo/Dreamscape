@@ -10,8 +10,8 @@ import { ScriptAnalysis } from './types';
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'studio' | 'deploy'>('studio');
   const [analysis, setAnalysis] = useState<ScriptAnalysis | null>(null);
+  const [audioParts, setAudioParts] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [playTrigger, setPlayTrigger] = useState(0);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -36,7 +36,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
             <span className="text-[10px] text-indigo-400 flex items-center gap-2 font-bold uppercase tracking-widest">
               <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
-              Ambient Engine Ready
+              Neural Engine Online
             </span>
           </div>
         </div>
@@ -47,12 +47,12 @@ const App: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             <div className="lg:col-span-7 space-y-6">
               <TTSForm 
-                onAnalysisComplete={setAnalysis} 
+                onAnalysisComplete={(a) => { setAnalysis(a); setAudioParts([]); }} 
+                onAudioComplete={setAudioParts}
                 setIsProcessing={setIsProcessing}
                 isProcessing={isProcessing}
-                onPerformRequest={() => setPlayTrigger(prev => prev + 1)}
               />
-              <AudioPlayer analysis={analysis} triggerPlay={playTrigger} />
+              <AudioPlayer analysis={analysis} audioParts={audioParts} />
             </div>
             <div className="lg:col-span-5">
               <TextAnalysisPanel analysis={analysis} isProcessing={isProcessing} />
@@ -65,7 +65,7 @@ const App: React.FC = () => {
 
       <footer className="border-t border-white/5 py-8 mt-12 bg-black">
         <div className="max-w-7xl mx-auto px-4 text-center">
-          <p className="text-gray-500 text-sm">© 2024 Aether Voice. Local Voice Processing Engine.</p>
+          <p className="text-gray-500 text-sm">© 2024 Aether Voice. Premium Emotional Audio Studio.</p>
         </div>
       </footer>
     </div>
